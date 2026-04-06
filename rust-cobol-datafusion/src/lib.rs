@@ -143,7 +143,7 @@ mod tests {
 
         let df = ctx
             .sql(
-                "SELECT \"CMR-CUST-ID\", \"CMR-LAST-NAME\", \"CMR-FIRST-NAME\"
+                "SELECT \"CMR-CUST-ID\", \"CMR-LAST-NAME\", \"CMR-FIRST-NAME\", \"CMR-BALANCE\"
                  FROM CUSTOMER
                  ORDER BY \"CMR-CUST-ID\"
                  LIMIT 2",
@@ -168,6 +168,11 @@ mod tests {
             .as_any()
             .downcast_ref::<StringArray>()
             .expect("CMR-FIRST-NAME as Utf8");
+        let balances = batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("CMR-BALANCE as Utf8");
 
         assert_eq!(cust_ids.value(0), "0000000001");
         assert_eq!(last_names.value(0), "JACKSON");
@@ -175,5 +180,6 @@ mod tests {
         assert_eq!(cust_ids.value(1), "0000000002");
         assert_eq!(last_names.value(1), "ALLEN");
         assert_eq!(first_names.value(1), "MELISSA");
+        assert_eq!(balances.value(0), "00000665548.94");
     }
 }
