@@ -42,6 +42,12 @@ Among the motivations for this project, it is possible to highlight:
 - Supports reading files compressed in Hadoop-compatible way (gzip, bzip2, etc), but with limited parallelism. 
   Uncompressed files are preferred for performance. 
 
+## Using Cobrix components without Spark
+
+If you want copybook parsing and data-file reading without Spark (for example to build a Rust service),
+see [`RUST_LIBRARY_PLAN.md`](RUST_LIBRARY_PLAN.md).
+An initial Rust implementation based on that plan is available in [`rust-cobol/`](rust-cobol/).
+
 ## Videos
 
 We have presented Cobrix at DataWorks Summit 2019 and Spark Summit 2019 conferences. The screencasts are available here:
