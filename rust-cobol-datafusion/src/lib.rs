@@ -26,19 +26,10 @@ pub enum DatafusionBackendError {
 
 pub type Result<T> = std::result::Result<T, DatafusionBackendError>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BackendConfig {
     pub parse: ParserConfig,
     pub decode: DecodeConfig,
-}
-
-impl Default for BackendConfig {
-    fn default() -> Self {
-        Self {
-            parse: ParserConfig::default(),
-            decode: DecodeConfig::default(),
-        }
-    }
 }
 
 pub fn build_mem_table_from_reader<R: Read>(
@@ -132,6 +123,7 @@ fn rows_to_batch(schema: &CobolSchema, rows: Vec<cobrix_rust::Row>) -> Result<Re
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     #[tokio::test]
@@ -151,20 +143,23 @@ mod tests {
 
         let df = ctx
             .sql(
-                "SELECT \"CMR-CUST-ID\", \"CMR-LAST-NAME\", \"CMR-FIRST-NAME\" \
-                 FROM CUSTOMER \
+                "SELECT \"CMR-CUST-ID\", \"CMR-LAST-NAME\", \"CMR-FIRST-NAME\"
+                 FROM CUSTOMER
+                 WHERE \"CMR-CUST-ID\" = '0000000046'
                  LIMIT 1",
             )
             .await
             .expect("query");
+        // WHERE \"CMR-CUST-ID\" = '0000000046'
+        let mut batches = df.collect().await.expect("collect");
+        let binding = batches.pop().unwrap();
+        let col1 = binding.column(1);
+        let a = col1
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap()
+            .value(0);
 
-        let batches = df.collect().await.expect("collect");
-        let view = datafusion::arrow::util::pretty::pretty_format_batches(&batches)
-            .expect("format")
-            .to_string();
-
-        assert!(view.contains("0000000001"));
-        assert!(view.contains("JACKSON"));
-        assert!(view.contains("MARGARET"));
+        assert_eq!(a, "ROBINSON");
     }
 }
