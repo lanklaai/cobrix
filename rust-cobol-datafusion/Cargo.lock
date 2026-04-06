@@ -514,6 +514,7 @@ dependencies = [
 name = "cobrix-rust"
 version = "0.1.0"
 dependencies = [
+ "ebcdic",
  "thiserror 1.0.69",
 ]
 
@@ -1318,6 +1319,12 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[package]]
+name = "ebcdic"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "206cdf0fb3a39f4b0adaf5002a59e7a53382fd68ad2afe907c041f5ae4525600"
 
 [[package]]
 name = "either"

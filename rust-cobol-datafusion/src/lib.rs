@@ -2,8 +2,8 @@ use std::io::Read;
 use std::sync::Arc;
 
 use cobrix_rust::{
-    parse_copybook, stream_rows, CobolError, DecodeConfig, ParserConfig, Schema as CobolSchema,
-    Value,
+    CobolError, DecodeConfig, ParserConfig, Schema as CobolSchema, Value, parse_copybook,
+    stream_rows,
 };
 use datafusion::arrow::array::{ArrayRef, BinaryArray, Int64Array, StringArray};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
@@ -136,13 +136,13 @@ mod tests {
 
     #[tokio::test]
     async fn query_copybook_data_with_datafusion_sql() {
-        let copybook = "01 REC.\n05 ID PIC 9(4).\n05 NAME PIC X(5).";
-        let data = b"0001ALICE0002BOB  0003CAROL";
+        let copybook = include_str!("../../rust-cobol/data/CUSTMAST.cbl");
+        let data = include_bytes!("../../rust-cobol/data/CUSTOMER.ebcdic");
 
         let ctx = SessionContext::new();
         register_cobol_table(
             &ctx,
-            "cobol_rows",
+            "CUSTOMER",
             copybook,
             &data[..],
             &BackendConfig::default(),
@@ -150,7 +150,7 @@ mod tests {
         .expect("table registered");
 
         let df = ctx
-            .sql("SELECT \"ID\", \"NAME\" FROM cobol_rows WHERE \"ID\" >= 2 ORDER BY \"ID\"")
+            .sql("SELECT CMR-CUST-ID,CMR-FIRST-NAME,CMR-FIRST-NAME FROM CUSTOMER ORDER BY CMR-CUST-ID LIMIT 1")
             .await
             .expect("query");
 
@@ -159,8 +159,8 @@ mod tests {
             .expect("format")
             .to_string();
 
-        assert!(view.contains("2"));
-        assert!(view.contains("BOB"));
-        assert!(view.contains("CAROL"));
+        assert!(view.contains("0000000001"));
+        assert!(view.contains("JACKSON"));
+        assert!(view.contains("MARGARET"));
     }
 }
