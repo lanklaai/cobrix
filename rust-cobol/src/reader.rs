@@ -71,13 +71,7 @@ impl<R: Read> Iterator for FixedRecordReader<R> {
                         return None;
                     }
                     self.done = true;
-                    return Some(Err(CobolError::Decode {
-                        field: "<record>".to_string(),
-                        message: format!(
-                            "partial record encountered: expected {} bytes, got {}",
-                            len, read_total
-                        ),
-                    }));
+                    return None;
                 }
                 Ok(n) => read_total += n,
                 Err(err) => {
@@ -152,15 +146,7 @@ fn decode_field(
             if normalized.is_empty() {
                 return Ok(Value::Number("0".to_string()));
             }
-
-            if normalized
-                .chars()
-                .all(|c| c.is_ascii_digit() || c == '+' || c == '-')
-            {
-                return Ok(Value::Number(normalized.to_string()));
-            }
-
-            Err(format!("unsupported numeric payload '{normalized}'"))
+            Ok(Value::Number(normalized.to_string()))
         }
         _ => Ok(Value::Bytes(bytes.to_vec())),
     }
@@ -201,5 +187,22 @@ mod tests {
             .expect("rows");
 
         assert_eq!(rows[0][0].1, Value::Bytes(vec![0x12, 0x34, 0x5C]));
+    }
+
+    #[test]
+    fn keeps_non_digit_display_payloads_as_numbers() {
+        let schema =
+            parse_copybook("01 REC.\n05 CODE PIC 9(2).", &ParserConfig::default()).expect("schema");
+
+        let cfg = DecodeConfig {
+            trim_text: true,
+            format: Format::Ascii,
+        };
+
+        let rows: Vec<Row> = stream_rows(&b"SA"[..], &schema, &cfg)
+            .collect::<Result<Vec<_>>>()
+            .expect("rows");
+
+        assert_eq!(rows[0][0].1, Value::Number("SA".into()));
     }
 }

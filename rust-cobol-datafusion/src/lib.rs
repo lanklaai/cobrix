@@ -150,7 +150,11 @@ mod tests {
         .expect("table registered");
 
         let df = ctx
-            .sql("SELECT CMR-CUST-ID,CMR-FIRST-NAME,CMR-FIRST-NAME FROM CUSTOMER ORDER BY CMR-CUST-ID LIMIT 1")
+            .sql(
+                "SELECT \"CMR-CUST-ID\", \"CMR-LAST-NAME\", \"CMR-FIRST-NAME\" \
+                 FROM CUSTOMER \
+                 LIMIT 1",
+            )
             .await
             .expect("query");
 
