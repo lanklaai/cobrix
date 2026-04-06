@@ -6,6 +6,7 @@ license = "Apache-2.0"
 description = "Spark-free COBOL copybook parser and fixed-length record reader inspired by Cobrix"
 
 [dependencies]
+ebcdic = "0.1.2"
 thiserror = "1"
 
 [dev-dependencies]

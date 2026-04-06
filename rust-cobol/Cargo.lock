@@ -6,6 +6,7 @@ version = 4
 name = "cobrix-rust"
 version = "0.1.0"
 dependencies = [
+ "ebcdic",
  "pretty_assertions",
  "thiserror",
 ]
@@ -15,6 +16,12 @@ name = "diff"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56254986775e3233ffa9c4d7d3faaf6d36a2c09d30b20687e9f88bc8bafc16c8"
+
+[[package]]
+name = "ebcdic"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "206cdf0fb3a39f4b0adaf5002a59e7a53382fd68ad2afe907c041f5ae4525600"
 
 [[package]]
 name = "pretty_assertions"

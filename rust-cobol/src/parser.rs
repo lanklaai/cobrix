@@ -182,11 +182,7 @@ fn extract_pic_clause(rest: &str) -> Option<String> {
     }
 
     let pic = pic.trim().trim_end_matches('.').replace(' ', "");
-    if pic.is_empty() {
-        None
-    } else {
-        Some(pic)
-    }
+    if pic.is_empty() { None } else { Some(pic) }
 }
 
 fn parse_picture(pic: String, usage: Usage) -> Result<Picture> {

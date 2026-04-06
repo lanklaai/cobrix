@@ -62,7 +62,7 @@ impl Picture {
             Usage::Display => digits,
             Usage::Comp3 => {
                 let nibbles = digits + usize::from(self.signed);
-                (nibbles + 1) / 2
+                nibbles.div_ceil(2)
             }
             Usage::Comp1 => 4,
             Usage::Comp2 => 8,

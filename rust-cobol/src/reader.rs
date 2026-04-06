@@ -1,16 +1,35 @@
 use std::io::Read;
 
 use crate::schema::{Picture, Row, Schema, Usage, Value};
+use ebcdic::ebcdic::Ebcdic;
+
 use crate::{CobolError, Result};
 
 #[derive(Debug, Clone)]
 pub struct DecodeConfig {
     pub trim_text: bool,
+    pub format: Format,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub enum Format {
+    #[default]
+    Ebcdic,
+    Ascii,
+}
+
+impl Format {
+    pub fn is_ebcdic(&self) -> bool {
+        matches!(self, Self::Ebcdic)
+    }
 }
 
 impl Default for DecodeConfig {
     fn default() -> Self {
-        Self { trim_text: true }
+        Self {
+            trim_text: true,
+            format: Format::default(),
+        }
     }
 }
 
@@ -83,6 +102,7 @@ pub fn stream_rows<R: Read>(
 fn decode_row(record: &[u8], schema: &Schema, cfg: &DecodeConfig) -> Result<Row> {
     let mut offset = 0usize;
     let mut row = Vec::with_capacity(schema.fields.len());
+    let mut buffer = vec![];
 
     for field in &schema.fields {
         let len = field.byte_len();
@@ -90,10 +110,14 @@ fn decode_row(record: &[u8], schema: &Schema, cfg: &DecodeConfig) -> Result<Row>
         offset += len;
 
         let picture = field.picture.as_ref().expect("leaf fields only");
-        let value = decode_field(raw, picture, cfg).map_err(|message| CobolError::Decode {
-            field: field.name.clone(),
-            message,
-        })?;
+        buffer.clear();
+        buffer.extend_from_slice(raw);
+
+        let value =
+            decode_field(raw, &mut buffer, picture, cfg).map_err(|message| CobolError::Decode {
+                field: field.name.clone(),
+                message,
+            })?;
 
         row.push((field.name.clone(), value));
     }
@@ -103,11 +127,19 @@ fn decode_row(record: &[u8], schema: &Schema, cfg: &DecodeConfig) -> Result<Row>
 
 fn decode_field(
     bytes: &[u8],
+    buffer: &mut [u8],
     picture: &Picture,
     cfg: &DecodeConfig,
 ) -> std::result::Result<Value, String> {
+    let bytes = if cfg.format.is_ebcdic() {
+        Ebcdic::ebcdic_to_ascii(bytes, buffer, bytes.len(), false, true);
+        buffer
+    } else {
+        bytes
+    };
+    let raw = String::from_utf8_lossy(bytes).to_string();
+
     if picture.is_alphanumeric() {
-        let raw = String::from_utf8_lossy(bytes).to_string();
         if cfg.trim_text {
             return Ok(Value::Text(raw.trim_end().to_string()));
         }
@@ -116,7 +148,6 @@ fn decode_field(
 
     match picture.usage {
         Usage::Display => {
-            let raw = String::from_utf8_lossy(bytes).to_string();
             let normalized = raw.trim();
             if normalized.is_empty() {
                 return Ok(Value::Number("0".to_string()));
@@ -138,7 +169,7 @@ fn decode_field(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{parse_copybook, ParserConfig};
+    use crate::{ParserConfig, parse_copybook};
 
     #[test]
     fn reads_fixed_rows() {
