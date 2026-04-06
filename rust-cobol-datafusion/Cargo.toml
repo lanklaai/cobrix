@@ -7,8 +7,11 @@ description = "DataFusion backend for cobrix-rust copybook/data reader"
 
 [dependencies]
 cobrix-rust = { path = "../rust-cobol" }
-datafusion = "50"
+datafusion = "53"
 thiserror = "1"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+anyhow = "1.0.102"
+async-trait = "0.1.89"
+datafusion-postgres = "0.16.0"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "time", "tracing"] }
