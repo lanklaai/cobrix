@@ -15,6 +15,8 @@ pub struct Field {
     pub name: String,
     pub picture: Option<Picture>,
     pub occurs: usize,
+    pub redefines: Option<String>,
+    pub depending_on: Option<String>,
 }
 
 impl Field {
@@ -27,6 +29,18 @@ impl Field {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Usage {
+    Display,
+    Comp,
+    Comp3,
+    Comp1,
+    Comp2,
+    Comp4,
+    Comp5,
+    Binary,
+}
+
 #[derive(Debug, Clone)]
 pub struct Picture {
     pub raw: String,
@@ -34,12 +48,34 @@ pub struct Picture {
     pub digits_before: usize,
     pub digits_after: usize,
     pub alpha_len: Option<usize>,
+    pub usage: Usage,
 }
 
 impl Picture {
     pub fn byte_len(&self) -> usize {
-        self.alpha_len
-            .unwrap_or(self.digits_before + self.digits_after + usize::from(self.signed))
+        if let Some(alpha_len) = self.alpha_len {
+            return alpha_len;
+        }
+
+        let digits = self.digits_before + self.digits_after;
+        match self.usage {
+            Usage::Display => digits,
+            Usage::Comp3 => {
+                let nibbles = digits + usize::from(self.signed);
+                (nibbles + 1) / 2
+            }
+            Usage::Comp1 => 4,
+            Usage::Comp2 => 8,
+            Usage::Comp | Usage::Comp4 | Usage::Comp5 | Usage::Binary => {
+                if digits <= 4 {
+                    2
+                } else if digits <= 9 {
+                    4
+                } else {
+                    8
+                }
+            }
+        }
     }
 
     pub fn is_alphanumeric(&self) -> bool {
@@ -51,6 +87,7 @@ impl Picture {
 pub enum Value {
     Text(String),
     Number(String),
+    Bytes(Vec<u8>),
 }
 
 pub type Row = Vec<(String, Value)>;

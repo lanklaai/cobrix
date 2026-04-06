@@ -1,6 +1,6 @@
 use std::io::Read;
 
-use crate::schema::{Picture, Row, Schema, Value};
+use crate::schema::{Picture, Row, Schema, Usage, Value};
 use crate::{CobolError, Result};
 
 #[derive(Debug, Clone)]
@@ -106,27 +106,33 @@ fn decode_field(
     picture: &Picture,
     cfg: &DecodeConfig,
 ) -> std::result::Result<Value, String> {
-    let raw = String::from_utf8_lossy(bytes).to_string();
     if picture.is_alphanumeric() {
+        let raw = String::from_utf8_lossy(bytes).to_string();
         if cfg.trim_text {
             return Ok(Value::Text(raw.trim_end().to_string()));
         }
         return Ok(Value::Text(raw));
     }
 
-    let normalized = raw.trim();
-    if normalized.is_empty() {
-        return Ok(Value::Number("0".to_string()));
-    }
+    match picture.usage {
+        Usage::Display => {
+            let raw = String::from_utf8_lossy(bytes).to_string();
+            let normalized = raw.trim();
+            if normalized.is_empty() {
+                return Ok(Value::Number("0".to_string()));
+            }
 
-    if normalized
-        .chars()
-        .all(|c| c.is_ascii_digit() || c == '+' || c == '-')
-    {
-        return Ok(Value::Number(normalized.to_string()));
-    }
+            if normalized
+                .chars()
+                .all(|c| c.is_ascii_digit() || c == '+' || c == '-')
+            {
+                return Ok(Value::Number(normalized.to_string()));
+            }
 
-    Err(format!("unsupported numeric payload '{normalized}'"))
+            Err(format!("unsupported numeric payload '{normalized}'"))
+        }
+        _ => Ok(Value::Bytes(bytes.to_vec())),
+    }
 }
 
 #[cfg(test)]
@@ -151,5 +157,18 @@ mod tests {
         assert_eq!(rows[0][0].1, Value::Number("0001".into()));
         assert_eq!(rows[0][1].1, Value::Text("ALICE".into()));
         assert_eq!(rows[1][1].1, Value::Text("BOB".into()));
+    }
+
+    #[test]
+    fn exposes_comp3_as_raw_bytes_for_now() {
+        let schema = parse_copybook("01 REC.\n05 ID PIC 9(5) COMP-3.", &ParserConfig::default())
+            .expect("schema");
+
+        let data = [0x12_u8, 0x34, 0x5C];
+        let rows: Vec<Row> = stream_rows(&data[..], &schema, &DecodeConfig::default())
+            .collect::<Result<Vec<_>>>()
+            .expect("rows");
+
+        assert_eq!(rows[0][0].1, Value::Bytes(vec![0x12, 0x34, 0x5C]));
     }
 }

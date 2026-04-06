@@ -4,17 +4,16 @@ This folder contains the first executable step of `RUST_LIBRARY_PLAN.md`.
 
 Implemented now:
 
-- Copybook parsing for a practical subset (`PIC X(...)`, `PIC 9(...)`, signed + implied decimal `V`, `OCCURS n`)
+- Copybook parsing for a broader subset: nested levels, continuation lines, `REDEFINES`, `OCCURS`, `DEPENDING ON`, `PIC X`, `PIC 9`, signed numerics, implied decimal `V`, explicit decimal point syntax, and usage detection (`DISPLAY`, `COMP`, `COMP-1/2/3/4/5`, `BINARY`)
 - Fixed-length record extraction from any `Read`
-- Row decoding to a simple typed model (`Value::Text`, `Value::Number`)
+- Row decoding to a simple typed model (`Value::Text`, `Value::Number`, `Value::Bytes`)
 - Iterator API: `stream_rows(...) -> impl Iterator<Item = Result<Row>>`
 
 Current limitations (planned follow-up):
 
-- No COMP / COMP-3 binary decoding yet
-- No REDEFINES materialization yet
-- No variable-block / RDW record extractors yet
-- No EBCDIC transcoding yet (bytes are currently interpreted as UTF-8/ASCII lossily)
+- Binary and packed numeric fields are currently surfaced as `Value::Bytes` (parse support exists, semantic decode still pending)
+- Full parity features such as advanced REDEFINES materialization and variable-block/RDW extraction are not yet implemented
+- No EBCDIC transcoding yet (bytes are currently interpreted as UTF-8/ASCII lossily for DISPLAY text/numbers)
 
 ## Quick example
 

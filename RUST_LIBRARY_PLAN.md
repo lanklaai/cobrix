@@ -99,3 +99,9 @@ Deliver one crate that supports:
 - `Iterator<Result<Row>>` API
 
 Then integrate with your TCP server and expose one protocol first (Arrow Flight is typically easier for typed analytics; MySQL wire can be added after the decode model stabilizes).
+
+### Status in this repository
+
+- ✅ Initial implementation is available in `rust-cobol/`.
+- ✅ Includes copybook parsing + fixed-length streaming iterator + row output model.
+- ⏳ Still pending full decode parity for all binary/packed formats and variable-block extractors.
