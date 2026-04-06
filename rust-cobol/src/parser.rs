@@ -18,6 +18,7 @@ pub fn parse_copybook(copybook_text: &str, cfg: &ParserConfig) -> Result<Schema>
     let logical_lines = logical_lines(copybook_text, cfg.allow_comments);
     let mut fields = Vec::new();
     let mut occurs_stack: Vec<(u8, usize)> = Vec::new();
+    let mut filler_count = 0usize;
 
     for line in logical_lines {
         let Some((level, name, rest)) = split_line(&line) else {
@@ -40,13 +41,17 @@ pub fn parse_copybook(copybook_text: &str, cfg: &ParserConfig) -> Result<Schema>
             .map(|pic| parse_picture(pic, parse_usage(&rest)))
             .transpose()?;
 
-        if name.eq_ignore_ascii_case("FILLER") {
-            continue;
-        }
+        let is_filler = name.eq_ignore_ascii_case("FILLER");
+        let field_name = if is_filler {
+            filler_count += 1;
+            format!("FILLER-{}", filler_count)
+        } else {
+            name
+        };
 
         fields.push(Field {
             level,
-            name,
+            name: field_name,
             picture,
             occurs: effective_occurs,
             redefines,
