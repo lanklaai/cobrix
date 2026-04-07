@@ -143,23 +143,43 @@ mod tests {
 
         let df = ctx
             .sql(
-                "SELECT \"CMR-CUST-ID\", \"CMR-LAST-NAME\", \"CMR-FIRST-NAME\"
+                "SELECT \"CMR-CUST-ID\", \"CMR-LAST-NAME\", \"CMR-FIRST-NAME\", \"CMR-BALANCE\"
                  FROM CUSTOMER
-                 WHERE \"CMR-CUST-ID\" = '0000000046'
-                 LIMIT 1",
+                 ORDER BY \"CMR-CUST-ID\"
+                 LIMIT 2",
             )
             .await
             .expect("query");
-        // WHERE \"CMR-CUST-ID\" = '0000000046'
-        let mut batches = df.collect().await.expect("collect");
-        let binding = batches.pop().unwrap();
-        let col1 = binding.column(1);
-        let a = col1
+
+        let batches = df.collect().await.expect("collect");
+        let batch = batches.first().expect("at least one batch");
+        let cust_ids = batch
+            .column(0)
             .as_any()
             .downcast_ref::<StringArray>()
-            .unwrap()
-            .value(0);
+            .expect("CMR-CUST-ID as Utf8");
+        let last_names = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("CMR-LAST-NAME as Utf8");
+        let first_names = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("CMR-FIRST-NAME as Utf8");
+        let balances = batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("CMR-BALANCE as Utf8");
 
-        assert_eq!(a, "ROBINSON");
+        assert_eq!(cust_ids.value(0), "0000000001");
+        assert_eq!(last_names.value(0), "JACKSON");
+        assert_eq!(first_names.value(0), "MARGARET");
+        assert_eq!(cust_ids.value(1), "0000000002");
+        assert_eq!(last_names.value(1), "ALLEN");
+        assert_eq!(first_names.value(1), "MELISSA");
+        assert_eq!(balances.value(0), "00000665548.94");
     }
 }

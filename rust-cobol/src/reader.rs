@@ -125,6 +125,10 @@ fn decode_field(
     picture: &Picture,
     cfg: &DecodeConfig,
 ) -> std::result::Result<Value, String> {
+    if matches!(picture.usage, Usage::Comp3) {
+        return decode_comp3(bytes, picture);
+    }
+
     let bytes = if cfg.format.is_ebcdic() {
         Ebcdic::ebcdic_to_ascii(bytes, buffer, bytes.len(), false, true);
         buffer
@@ -150,6 +154,64 @@ fn decode_field(
         }
         _ => Ok(Value::Bytes(bytes.to_vec())),
     }
+}
+
+fn decode_comp3(bytes: &[u8], picture: &Picture) -> std::result::Result<Value, String> {
+    if bytes.is_empty() {
+        return Err("empty COMP-3 payload".to_string());
+    }
+
+    let mut digits = Vec::with_capacity(bytes.len() * 2);
+    for byte in bytes.iter().take(bytes.len() - 1) {
+        digits.push((byte >> 4) & 0x0F);
+        digits.push(byte & 0x0F);
+    }
+
+    let last = bytes[bytes.len() - 1];
+    digits.push((last >> 4) & 0x0F);
+    let sign_nibble = last & 0x0F;
+
+    let negative = if picture.signed {
+        match sign_nibble {
+            0x0B | 0x0D => true,
+            0x0A | 0x0C | 0x0E | 0x0F => false,
+            _ => return Err(format!("invalid COMP-3 sign nibble: {sign_nibble:#x}")),
+        }
+    } else {
+        digits.push(sign_nibble);
+        false
+    };
+
+    let expected_digits = picture.digits_before + picture.digits_after;
+    if digits.iter().any(|digit| *digit > 9) {
+        return Err("invalid COMP-3 digit nibble".to_string());
+    }
+
+    if digits.len() > expected_digits {
+        let drop = digits.len() - expected_digits;
+        if digits[..drop].iter().any(|digit| *digit != 0) {
+            return Err("COMP-3 payload has more digits than picture allows".to_string());
+        }
+        digits.drain(..drop);
+    } else if digits.len() < expected_digits {
+        let mut padded = vec![0u8; expected_digits - digits.len()];
+        padded.extend(digits);
+        digits = padded;
+    }
+
+    let mut value = String::with_capacity(expected_digits + usize::from(picture.digits_after > 0));
+    for (idx, digit) in digits.into_iter().enumerate() {
+        if picture.digits_after > 0 && idx == picture.digits_before {
+            value.push('.');
+        }
+        value.push(char::from(b'0' + digit));
+    }
+
+    if negative && value.chars().any(|ch| ch != '0' && ch != '.') {
+        value.insert(0, '-');
+    }
+
+    Ok(Value::Number(value))
 }
 
 #[cfg(test)]
@@ -178,7 +240,7 @@ mod tests {
 
     #[test]
     fn exposes_comp3_as_raw_bytes_for_now() {
-        let schema = parse_copybook("01 REC.\n05 ID PIC 9(5) COMP-3.", &ParserConfig::default())
+        let schema = parse_copybook("01 REC.\n05 ID PIC S9(5) COMP-3.", &ParserConfig::default())
             .expect("schema");
 
         let data = [0x12_u8, 0x34, 0x5C];
@@ -186,7 +248,20 @@ mod tests {
             .collect::<Result<Vec<_>>>()
             .expect("rows");
 
-        assert_eq!(rows[0][0].1, Value::Bytes(vec![0x12, 0x34, 0x5C]));
+        assert_eq!(rows[0][0].1, Value::Number("12345".into()));
+    }
+
+    #[test]
+    fn decodes_signed_comp3_with_implied_decimal() {
+        let schema = parse_copybook("01 REC.\n05 BAL PIC S9(5)V99 COMP-3.", &ParserConfig::default())
+            .expect("schema");
+
+        let data = [0x12_u8, 0x34, 0x56, 0x7D];
+        let rows: Vec<Row> = stream_rows(&data[..], &schema, &DecodeConfig::default())
+            .collect::<Result<Vec<_>>>()
+            .expect("rows");
+
+        assert_eq!(rows[0][0].1, Value::Number("-12345.67".into()));
     }
 
     #[test]
