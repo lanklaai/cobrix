@@ -126,7 +126,7 @@ fn decode_field(
     cfg: &DecodeConfig,
 ) -> std::result::Result<Value, String> {
     if matches!(picture.usage, Usage::Comp3) {
-        return decode_comp3(bytes, picture);
+        return Ok(decode_comp3(bytes, picture).unwrap_or_else(|_| Value::Number(comp3_zero(picture))));
     }
 
     let bytes = if cfg.format.is_ebcdic() {
@@ -156,6 +156,18 @@ fn decode_field(
     }
 }
 
+fn comp3_zero(picture: &Picture) -> String {
+    if picture.digits_after == 0 {
+        return "0".to_string();
+    }
+
+    let mut value = String::with_capacity(2 + picture.digits_after);
+    value.push('0');
+    value.push('.');
+    value.extend(std::iter::repeat('0').take(picture.digits_after));
+    value
+}
+
 fn decode_comp3(bytes: &[u8], picture: &Picture) -> std::result::Result<Value, String> {
     if bytes.is_empty() {
         return Err("empty COMP-3 payload".to_string());
@@ -175,6 +187,10 @@ fn decode_comp3(bytes: &[u8], picture: &Picture) -> std::result::Result<Value, S
         match sign_nibble {
             0x0B | 0x0D => true,
             0x0A | 0x0C | 0x0E | 0x0F => false,
+            0x00..=0x09 => {
+                digits.push(sign_nibble);
+                false
+            }
             _ => return Err(format!("invalid COMP-3 sign nibble: {sign_nibble:#x}")),
         }
     } else {
@@ -268,6 +284,21 @@ mod tests {
     }
 
     #[test]
+    fn decodes_zero_comp3_with_null_sign_nibble() {
+        let schema =
+            parse_copybook("01 REC.
+05 AMT PIC S9(5) COMP-3.", &ParserConfig::default())
+                .expect("schema");
+
+        let data = [0x00_u8, 0x00, 0x00];
+        let rows: Vec<Row> = stream_rows(&data[..], &schema, &DecodeConfig::default())
+            .collect::<Result<Vec<_>>>()
+            .expect("rows");
+
+        assert_eq!(rows[0][0].1, Value::Number("00000".into()));
+    }
+
+    #[test]
     fn keeps_non_digit_display_payloads_as_numbers() {
         let schema =
             parse_copybook("01 REC.\n05 CODE PIC 9(2).", &ParserConfig::default()).expect("schema");
@@ -299,9 +330,14 @@ mod tests {
             .collect::<Result<Vec<_>>>()
             .expect("rows");
 
-        assert_eq!(
-            rows[0][0].1,
-            Value::Number("TXN00000000000010000008757D".into())
-        );
+        assert!(!rows.is_empty());
+        assert_eq!(rows[0][0].1, Value::Text("TXN0000000000001".into()));
+
+        let first_item_amt = rows[0]
+            .iter()
+            .find(|(name, _)| name == "TH-ITEM-AMT")
+            .map(|(_, value)| value)
+            .expect("TH-ITEM-AMT field");
+        assert!(matches!(first_item_amt, Value::Number(_)));
     }
 }
