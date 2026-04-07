@@ -253,8 +253,11 @@ mod tests {
 
     #[test]
     fn decodes_signed_comp3_with_implied_decimal() {
-        let schema = parse_copybook("01 REC.\n05 BAL PIC S9(5)V99 COMP-3.", &ParserConfig::default())
-            .expect("schema");
+        let schema = parse_copybook(
+            "01 REC.\n05 BAL PIC S9(5)V99 COMP-3.",
+            &ParserConfig::default(),
+        )
+        .expect("schema");
 
         let data = [0x12_u8, 0x34, 0x56, 0x7D];
         let rows: Vec<Row> = stream_rows(&data[..], &schema, &DecodeConfig::default())
@@ -279,5 +282,26 @@ mod tests {
             .expect("rows");
 
         assert_eq!(rows[0][0].1, Value::Number("SA".into()));
+    }
+
+    #[test]
+    fn can_parse_transaction_comp3() {
+        let cb1 = include_str!("../data/TRANSHST.cbl");
+        let schema = parse_copybook(cb1, &ParserConfig::default()).expect("schema");
+
+        let cfg = DecodeConfig {
+            trim_text: true,
+            ..Default::default()
+        };
+
+        let data = include_bytes!("../data/TRANSACTIONS.ebcdic");
+        let rows: Vec<Row> = stream_rows(&data[..], &schema, &cfg)
+            .collect::<Result<Vec<_>>>()
+            .expect("rows");
+
+        assert_eq!(
+            rows[0][0].1,
+            Value::Number("TXN00000000000010000008757D".into())
+        );
     }
 }
