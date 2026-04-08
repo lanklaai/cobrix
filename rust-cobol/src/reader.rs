@@ -126,7 +126,9 @@ fn decode_field(
     cfg: &DecodeConfig,
 ) -> std::result::Result<Value, String> {
     if matches!(picture.usage, Usage::Comp3) {
-        return Ok(decode_comp3(bytes, picture).unwrap_or_else(|_| Value::Number(comp3_zero(picture))));
+        return Ok(
+            decode_comp3(bytes, picture).unwrap_or_else(|_| Value::Number(comp3_zero(picture)))
+        );
     }
 
     let bytes = if cfg.format.is_ebcdic() {
@@ -285,10 +287,12 @@ mod tests {
 
     #[test]
     fn decodes_zero_comp3_with_null_sign_nibble() {
-        let schema =
-            parse_copybook("01 REC.
-05 AMT PIC S9(5) COMP-3.", &ParserConfig::default())
-                .expect("schema");
+        let schema = parse_copybook(
+            "01 REC.
+05 AMT PIC S9(5) COMP-3.",
+            &ParserConfig::default(),
+        )
+        .expect("schema");
 
         let data = [0x00_u8, 0x00, 0x00];
         let rows: Vec<Row> = stream_rows(&data[..], &schema, &DecodeConfig::default())
@@ -339,5 +343,30 @@ mod tests {
             .map(|(_, value)| value)
             .expect("TH-ITEM-AMT field");
         assert!(matches!(first_item_amt, Value::Number(_)));
+    }
+
+    #[test]
+    fn test_data_not_garbage() {
+        let cb1 = include_str!("../../data/test5d_copybook.cob");
+        let schema = parse_copybook(cb1, &ParserConfig::default()).expect("schema");
+
+        let cfg = DecodeConfig {
+            trim_text: true,
+            ..Default::default()
+        };
+
+        let data = include_bytes!("../../data/test5_data/COMP.DETAILS.SEP30.DATA.dat");
+        let rows: Vec<Row> = stream_rows(&data[..], &schema, &cfg)
+            .collect::<Result<Vec<_>>>()
+            .expect("rows");
+
+        assert!(!rows.is_empty());
+        // Record length should not be a string
+        assert_eq!(rows[0][0].1, Value::Number("64".to_string()));
+        // Should not have a bunch of nulls at the end
+        assert_eq!(rows[0][2].1, Value::Text("C".into()));
+        assert_eq!(rows[0][4].1, Value::Text("Joan Q & Z".into()));
+        // Should not be null terminated
+        assert_eq!(rows[0][5].1, Value::Text("10 Sandton, Johannesburg".into()));
     }
 }
