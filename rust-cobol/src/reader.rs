@@ -97,21 +97,42 @@ fn decode_row(record: &[u8], schema: &Schema, cfg: &DecodeConfig) -> Result<Row>
     let mut offset = 0usize;
     let mut row = Vec::with_capacity(schema.fields.len());
     let mut buffer = vec![];
+    let rdw_little_endian_header = schema.fields.len() >= 2
+        && schema.fields[0]
+            .picture
+            .as_ref()
+            .is_some_and(|pic| matches!(pic.usage, Usage::Comp | Usage::Comp4 | Usage::Comp5 | Usage::Binary))
+        && schema.fields[0].byte_len() == 2
+        && schema.fields[1]
+            .picture
+            .as_ref()
+            .is_some_and(Picture::is_alphanumeric)
+        && schema.fields[1].byte_len() == 2
+        && record.len() >= 4
+        && record[0] == 0
+        && record[1] == 0
+        && record[3] == 0;
 
-    for field in &schema.fields {
+    for (index, field) in schema.fields.iter().enumerate() {
         let len = field.byte_len();
         let raw = &record[offset..offset + len];
+        let decode_bytes = if rdw_little_endian_header && index == 0 {
+            &record[2..4]
+        } else {
+            raw
+        };
         offset += len;
 
         let picture = field.picture.as_ref().expect("leaf fields only");
         buffer.clear();
-        buffer.extend_from_slice(raw);
+        buffer.extend_from_slice(decode_bytes);
 
-        let value =
-            decode_field(raw, &mut buffer, picture, cfg).map_err(|message| CobolError::Decode {
+        let value = decode_field(decode_bytes, &mut buffer, picture, cfg).map_err(|message| {
+            CobolError::Decode {
                 field: field.name.clone(),
                 message,
-            })?;
+            }
+        })?;
 
         row.push((field.name.clone(), value));
     }
@@ -130,6 +151,12 @@ fn decode_field(
             decode_comp3(bytes, picture).unwrap_or_else(|_| Value::Number(comp3_zero(picture)))
         );
     }
+    if matches!(
+        picture.usage,
+        Usage::Comp | Usage::Comp4 | Usage::Comp5 | Usage::Binary
+    ) {
+        return decode_binary(bytes, picture);
+    }
 
     let bytes = if cfg.format.is_ebcdic() {
         Ebcdic::ebcdic_to_ascii(bytes, buffer, bytes.len(), false, true);
@@ -141,7 +168,10 @@ fn decode_field(
 
     if picture.is_alphanumeric() {
         if cfg.trim_text {
-            return Ok(Value::Text(raw.trim_end().to_string()));
+            return Ok(Value::Text(
+                raw.trim_end_matches(|ch| ch == '\u{0}' || ch == ' ')
+                    .to_string(),
+            ));
         }
         return Ok(Value::Text(raw));
     }
@@ -156,6 +186,52 @@ fn decode_field(
         }
         _ => Ok(Value::Bytes(bytes.to_vec())),
     }
+}
+
+fn decode_binary(bytes: &[u8], picture: &Picture) -> std::result::Result<Value, String> {
+    let mut raw = match bytes.len() {
+        2 => i64::from(i16::from_le_bytes([bytes[0], bytes[1]])),
+        4 => i64::from(i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
+        8 => i64::from_le_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        ]),
+        _ => return Err(format!("unsupported COMP/BINARY payload length: {}", bytes.len())),
+    };
+
+    if !picture.signed && raw < 0 {
+        raw = match bytes.len() {
+            2 => i64::from(u16::from_le_bytes([bytes[0], bytes[1]])),
+            4 => i64::from(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
+            8 => u64::from_le_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            ]) as i64,
+            _ => raw,
+        };
+    }
+
+    let value = if picture.digits_after == 0 {
+        raw.to_string()
+    } else {
+        let negative = raw < 0;
+        let abs = raw.unsigned_abs().to_string();
+        let mut digits = abs;
+        if digits.len() <= picture.digits_after {
+            let mut padded = "0".repeat(picture.digits_after + 1 - digits.len());
+            padded.push_str(&digits);
+            digits = padded;
+        }
+        let split = digits.len() - picture.digits_after;
+        let mut rendered = String::with_capacity(digits.len() + 1 + usize::from(negative));
+        if negative {
+            rendered.push('-');
+        }
+        rendered.push_str(&digits[..split]);
+        rendered.push('.');
+        rendered.push_str(&digits[split..]);
+        rendered
+    };
+
+    Ok(Value::Number(value))
 }
 
 fn comp3_zero(picture: &Picture) -> String {
@@ -246,7 +322,11 @@ mod tests {
         .expect("schema");
 
         let data = b"0001ALICE0002BOB  ";
-        let rows: Vec<Row> = stream_rows(&data[..], &schema, &DecodeConfig::default())
+        let cfg = DecodeConfig {
+            format: Format::Ascii,
+            ..Default::default()
+        };
+        let rows: Vec<Row> = stream_rows(&data[..], &schema, &cfg)
             .collect::<Result<Vec<_>>>()
             .expect("rows");
 
@@ -368,5 +448,24 @@ mod tests {
         assert_eq!(rows[0][4].1, Value::Text("Joan Q & Z".into()));
         // Should not be null terminated
         assert_eq!(rows[0][5].1, Value::Text("10 Sandton, Johannesburg".into()));
+    }
+
+    #[test]
+    fn decodes_comp_and_trims_null_terminated_text() {
+        let schema = parse_copybook(
+            "01 REC.
+05 NUM PIC 9(4) COMP.
+05 TXT PIC X(5).",
+            &ParserConfig::default(),
+        )
+        .expect("schema");
+
+        let data = [0x40_u8, 0x00, 0xC3, 0xD6, 0xC2, 0x00, 0x00];
+        let rows: Vec<Row> = stream_rows(&data[..], &schema, &DecodeConfig::default())
+            .collect::<Result<Vec<_>>>()
+            .expect("rows");
+
+        assert_eq!(rows[0][0].1, Value::Number("64".into()));
+        assert_eq!(rows[0][1].1, Value::Text("COB".into()));
     }
 }
