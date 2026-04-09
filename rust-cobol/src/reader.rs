@@ -98,10 +98,12 @@ fn decode_row(record: &[u8], schema: &Schema, cfg: &DecodeConfig) -> Result<Row>
     let mut row = Vec::with_capacity(schema.fields.len());
     let mut buffer = vec![];
     let rdw_little_endian_header = schema.fields.len() >= 2
-        && schema.fields[0]
-            .picture
-            .as_ref()
-            .is_some_and(|pic| matches!(pic.usage, Usage::Comp | Usage::Comp4 | Usage::Comp5 | Usage::Binary))
+        && schema.fields[0].picture.as_ref().is_some_and(|pic| {
+            matches!(
+                pic.usage,
+                Usage::Comp | Usage::Comp4 | Usage::Comp5 | Usage::Binary
+            )
+        })
         && schema.fields[0].byte_len() == 2
         && schema.fields[1]
             .picture
@@ -169,8 +171,7 @@ fn decode_field(
     if picture.is_alphanumeric() {
         if cfg.trim_text {
             return Ok(Value::Text(
-                raw.trim_end_matches(|ch| ch == '\u{0}' || ch == ' ')
-                    .to_string(),
+                raw.trim_end_matches(['\u{0}', ' ']).to_string(),
             ));
         }
         return Ok(Value::Text(raw));
@@ -195,7 +196,12 @@ fn decode_binary(bytes: &[u8], picture: &Picture) -> std::result::Result<Value, 
         8 => i64::from_le_bytes([
             bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
         ]),
-        _ => return Err(format!("unsupported COMP/BINARY payload length: {}", bytes.len())),
+        _ => {
+            return Err(format!(
+                "unsupported COMP/BINARY payload length: {}",
+                bytes.len()
+            ));
+        }
     };
 
     if !picture.signed && raw < 0 {
@@ -242,7 +248,7 @@ fn comp3_zero(picture: &Picture) -> String {
     let mut value = String::with_capacity(2 + picture.digits_after);
     value.push('0');
     value.push('.');
-    value.extend(std::iter::repeat('0').take(picture.digits_after));
+    value.extend(std::iter::repeat_n('0', picture.digits_after));
     value
 }
 
@@ -448,6 +454,31 @@ mod tests {
         assert_eq!(rows[0][4].1, Value::Text("Joan Q & Z".into()));
         // Should not be null terminated
         assert_eq!(rows[0][5].1, Value::Text("10 Sandton, Johannesburg".into()));
+    }
+
+    #[test]
+    fn test_data_not_garbage2() {
+        let cb1 = include_str!("../../data/test5d_copybook.cob");
+        let schema = parse_copybook(cb1, &ParserConfig::default()).expect("schema");
+
+        let cfg = DecodeConfig {
+            trim_text: true,
+            ..Default::default()
+        };
+
+        let data = include_bytes!("../../data/test5_data/COMP.DETAILS.SEP30.DATA.dat");
+        let rows: Vec<Row> = stream_rows(&data[..], &schema, &cfg)
+            .collect::<Result<Vec<_>>>()
+            .expect("rows");
+
+        assert!(!rows.is_empty());
+        // Record length should not be a string
+        assert_eq!(rows[1][0].1, Value::Number("60".to_string()));
+        // Should not have a bunch of nulls at the end
+        assert_eq!(rows[1][2].1, Value::Text("P".into()));
+        assert_eq!(rows[1][4].1, Value::Text("+(277) 944 44 5".into()));
+        // Should not be null terminated
+        assert_eq!(rows[1][5].1, Value::Text("5 Janiece Newcombe".into()));
     }
 
     #[test]
