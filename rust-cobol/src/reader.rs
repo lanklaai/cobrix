@@ -38,6 +38,14 @@ pub struct FixedRecordReader<R: Read> {
     schema: Schema,
     cfg: DecodeConfig,
     done: bool,
+    mode: RecordReaderMode,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum RecordReaderMode {
+    Unknown,
+    Fixed,
+    RdwLittleEndian,
 }
 
 impl<R: Read> FixedRecordReader<R> {
@@ -47,6 +55,7 @@ impl<R: Read> FixedRecordReader<R> {
             schema,
             cfg,
             done: false,
+            mode: RecordReaderMode::Unknown,
         }
     }
 }
@@ -59,45 +68,113 @@ impl<R: Read> Iterator for FixedRecordReader<R> {
             return None;
         }
 
-        let len = self.schema.fixed_record_len();
+        let record = match self.mode {
+            RecordReaderMode::Unknown => self.read_first_record(),
+            RecordReaderMode::Fixed => self.read_fixed_record(),
+            RecordReaderMode::RdwLittleEndian => self.read_rdw_record(),
+        };
+
+        match record {
+            Ok(Some(record)) => Some(decode_row(&record, &self.schema, &self.cfg)),
+            Ok(None) => {
+                self.done = true;
+                None
+            }
+            Err(err) => {
+                self.done = true;
+                Some(Err(CobolError::Io(err)))
+            }
+        }
+    }
+}
+
+impl<R: Read> FixedRecordReader<R> {
+    fn read_first_record(&mut self) -> std::io::Result<Option<Vec<u8>>> {
+        let fixed_len = self.schema.fixed_record_len();
+        let prefix_len = fixed_len.min(4);
+
+        let Some(header) = self.read_exact_or_eof(prefix_len)? else {
+            return Ok(None);
+        };
+
+        if prefix_len == 4 && looks_like_rdw_little_endian_header(&self.schema, &header) {
+            self.mode = RecordReaderMode::RdwLittleEndian;
+            let rdw_len = usize::from(u16::from_le_bytes([header[2], header[3]]));
+            let Some(rest) = self.read_exact_or_eof(rdw_len)? else {
+                return Ok(None);
+            };
+            let mut record = header;
+            record.extend_from_slice(&rest);
+            return Ok(Some(record));
+        }
+
+        self.mode = RecordReaderMode::Fixed;
+        if fixed_len <= prefix_len {
+            return Ok(Some(header));
+        }
+
+        let Some(rest) = self.read_exact_or_eof(fixed_len - prefix_len)? else {
+            return Ok(None);
+        };
+        let mut record = header;
+        record.extend_from_slice(&rest);
+        Ok(Some(record))
+    }
+
+    fn read_fixed_record(&mut self) -> std::io::Result<Option<Vec<u8>>> {
+        self.read_exact_or_eof(self.schema.fixed_record_len())
+    }
+
+    fn read_rdw_record(&mut self) -> std::io::Result<Option<Vec<u8>>> {
+        let Some(header) = self.read_exact_or_eof(4)? else {
+            return Ok(None);
+        };
+
+        let rdw_len = usize::from(u16::from_le_bytes([header[2], header[3]]));
+        let Some(rest) = self.read_exact_or_eof(rdw_len)? else {
+            return Ok(None);
+        };
+
+        let mut record = header;
+        record.extend_from_slice(&rest);
+        Ok(Some(record))
+    }
+
+    fn read_exact_or_eof(&mut self, len: usize) -> std::io::Result<Option<Vec<u8>>> {
         let mut buf = vec![0u8; len];
         let mut read_total = 0usize;
 
         while read_total < len {
-            match self.input.read(&mut buf[read_total..]) {
-                Ok(0) => {
-                    if read_total == 0 {
-                        self.done = true;
-                        return None;
-                    }
-                    self.done = true;
-                    return None;
-                }
-                Ok(n) => read_total += n,
-                Err(err) => {
-                    self.done = true;
-                    return Some(Err(CobolError::Io(err)));
-                }
+            match self.input.read(&mut buf[read_total..])? {
+                0 if read_total == 0 => return Ok(None),
+                0 => return Ok(None),
+                n => read_total += n,
             }
         }
 
-        Some(decode_row(&buf, &self.schema, &self.cfg))
+        Ok(Some(buf))
     }
 }
 
-pub fn stream_rows<R: Read>(
-    input: R,
-    schema: &Schema,
-    cfg: &DecodeConfig,
-) -> impl Iterator<Item = Result<Row>> {
-    FixedRecordReader::new(input, schema.clone(), cfg.clone())
+
+fn looks_like_rdw_little_endian_header(schema: &Schema, header: &[u8]) -> bool {
+    if header.len() < 4 {
+        return false;
+    }
+
+    has_rdw_little_endian_layout(schema) && header[0] == 0 && header[1] == 0 && header[3] == 0
 }
 
-fn decode_row(record: &[u8], schema: &Schema, cfg: &DecodeConfig) -> Result<Row> {
-    let mut offset = 0usize;
-    let mut row = Vec::with_capacity(schema.fields.len());
-    let mut buffer = vec![];
-    let rdw_little_endian_header = schema.fields.len() >= 2
+fn is_rdw_little_endian_record(schema: &Schema, record: &[u8]) -> bool {
+    has_rdw_little_endian_layout(schema)
+        && record.len() >= 4
+        && record[0] == 0
+        && record[1] == 0
+        && record[3] == 0
+}
+
+fn has_rdw_little_endian_layout(schema: &Schema) -> bool {
+    schema.fields.len() >= 2
         && schema.fields[0].picture.as_ref().is_some_and(|pic| {
             matches!(
                 pic.usage,
@@ -110,14 +187,35 @@ fn decode_row(record: &[u8], schema: &Schema, cfg: &DecodeConfig) -> Result<Row>
             .as_ref()
             .is_some_and(Picture::is_alphanumeric)
         && schema.fields[1].byte_len() == 2
-        && record.len() >= 4
-        && record[0] == 0
-        && record[1] == 0
-        && record[3] == 0;
+}
+pub fn stream_rows<R: Read>(
+    input: R,
+    schema: &Schema,
+    cfg: &DecodeConfig,
+) -> impl Iterator<Item = Result<Row>> {
+    FixedRecordReader::new(input, schema.clone(), cfg.clone())
+}
+
+fn decode_row(record: &[u8], schema: &Schema, cfg: &DecodeConfig) -> Result<Row> {
+    let mut offset = 0usize;
+    let mut row = Vec::with_capacity(schema.fields.len());
+    let mut buffer = vec![];
+    let mut field_buf = vec![];
+    let rdw_little_endian_header = is_rdw_little_endian_record(schema, record);
 
     for (index, field) in schema.fields.iter().enumerate() {
         let len = field.byte_len();
-        let raw = &record[offset..offset + len];
+        let end = offset + len;
+        let raw = if end <= record.len() {
+            &record[offset..end]
+        } else {
+            field_buf.clear();
+            if offset < record.len() {
+                field_buf.extend_from_slice(&record[offset..]);
+            }
+            field_buf.resize(len, 0);
+            &field_buf
+        };
         let decode_bytes = if rdw_little_endian_header && index == 0 {
             &record[2..4]
         } else {
@@ -169,12 +267,11 @@ fn decode_field(
     let raw = String::from_utf8_lossy(bytes).to_string();
 
     if picture.is_alphanumeric() {
+        let normalized = raw.replace('\u{0}', " ");
         if cfg.trim_text {
-            return Ok(Value::Text(
-                raw.trim_end_matches(['\u{0}', ' ']).to_string(),
-            ));
+            return Ok(Value::Text(normalized.trim_end_matches(' ').to_string()));
         }
-        return Ok(Value::Text(raw));
+        return Ok(Value::Text(normalized));
     }
 
     match picture.usage {
