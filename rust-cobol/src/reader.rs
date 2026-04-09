@@ -46,7 +46,8 @@ pub struct FixedRecordReader<R: Read> {
 enum RecordReaderMode {
     Unknown,
     Fixed,
-    RdwLittleEndian,
+    RdwLittleEndianWithSchema,
+    RdwLittleEndianPayloadOnly,
 }
 
 impl<R: Read> FixedRecordReader<R> {
@@ -72,7 +73,8 @@ impl<R: Read> Iterator for FixedRecordReader<R> {
         let record = match self.mode {
             RecordReaderMode::Unknown => self.read_first_record(),
             RecordReaderMode::Fixed => self.read_fixed_record(),
-            RecordReaderMode::RdwLittleEndian => self.read_rdw_record(),
+            RecordReaderMode::RdwLittleEndianWithSchema => self.read_rdw_record_with_schema(),
+            RecordReaderMode::RdwLittleEndianPayloadOnly => self.read_rdw_record_payload_only(),
         };
 
         match record {
@@ -98,15 +100,21 @@ impl<R: Read> FixedRecordReader<R> {
             return Ok(None);
         };
 
-        if prefix_len == 4 && looks_like_rdw_little_endian_header(&self.schema, &header) {
-            self.mode = RecordReaderMode::RdwLittleEndian;
+        if prefix_len == 4 {
             let rdw_len = usize::from(u16::from_le_bytes([header[2], header[3]]));
-            let Some(rest) = self.read_exact_or_eof(rdw_len)? else {
-                return Ok(None);
-            };
-            let mut record = header;
-            record.extend_from_slice(&rest);
-            return Ok(Some(record));
+            if looks_like_rdw_little_endian_header_with_schema(&self.schema, &header) {
+                self.mode = RecordReaderMode::RdwLittleEndianWithSchema;
+                let Some(rest) = self.read_exact_or_eof(rdw_len)? else {
+                    return Ok(None);
+                };
+                let mut record = header;
+                record.extend_from_slice(&rest);
+                return Ok(Some(record));
+            }
+            if looks_like_rdw_little_endian_prefix(&header) && rdw_len > 0 && rdw_len <= fixed_len {
+                self.mode = RecordReaderMode::RdwLittleEndianPayloadOnly;
+                return self.read_exact_or_eof(rdw_len);
+            }
         }
 
         self.mode = RecordReaderMode::Fixed;
@@ -126,7 +134,7 @@ impl<R: Read> FixedRecordReader<R> {
         self.read_exact_or_eof(self.schema.fixed_record_len())
     }
 
-    fn read_rdw_record(&mut self) -> std::io::Result<Option<Vec<u8>>> {
+    fn read_rdw_record_with_schema(&mut self) -> std::io::Result<Option<Vec<u8>>> {
         let Some(header) = self.read_exact_or_eof(4)? else {
             return Ok(None);
         };
@@ -139,6 +147,19 @@ impl<R: Read> FixedRecordReader<R> {
         let mut record = header;
         record.extend_from_slice(&rest);
         Ok(Some(record))
+    }
+
+    fn read_rdw_record_payload_only(&mut self) -> std::io::Result<Option<Vec<u8>>> {
+        let Some(header) = self.read_exact_or_eof(4)? else {
+            return Ok(None);
+        };
+
+        if !looks_like_rdw_little_endian_prefix(&header) {
+            return Ok(None);
+        }
+
+        let rdw_len = usize::from(u16::from_le_bytes([header[2], header[3]]));
+        self.read_exact_or_eof(rdw_len)
     }
 
     fn read_exact_or_eof(&mut self, len: usize) -> std::io::Result<Option<Vec<u8>>> {
@@ -157,12 +178,16 @@ impl<R: Read> FixedRecordReader<R> {
     }
 }
 
-fn looks_like_rdw_little_endian_header(schema: &Schema, header: &[u8]) -> bool {
+fn looks_like_rdw_little_endian_header_with_schema(schema: &Schema, header: &[u8]) -> bool {
     if header.len() < 4 {
         return false;
     }
 
-    has_rdw_little_endian_layout(schema) && header[0] == 0 && header[1] == 0 && header[3] == 0
+    has_rdw_little_endian_layout(schema) && looks_like_rdw_little_endian_prefix(header)
+}
+
+fn looks_like_rdw_little_endian_prefix(header: &[u8]) -> bool {
+    header.len() >= 4 && header[0] == 0 && header[1] == 0 && header[3] == 0
 }
 
 fn is_rdw_little_endian_record(schema: &Schema, record: &[u8]) -> bool {
@@ -313,36 +338,53 @@ fn decode_field(
 }
 
 fn decode_binary(bytes: &[u8], picture: &Picture) -> std::result::Result<Value, String> {
-    let mut raw = match bytes.len() {
-        2 => i64::from(i16::from_le_bytes([bytes[0], bytes[1]])),
-        4 => i64::from(i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
-        8 => i64::from_le_bytes([
-            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-        ]),
-        _ => {
-            return Err(format!(
-                "unsupported COMP/BINARY payload length: {}",
-                bytes.len()
-            ));
+    let (raw_le, raw_be) = match (picture.signed, bytes.len()) {
+        (true, 2) => (
+            i128::from(i16::from_le_bytes([bytes[0], bytes[1]])),
+            i128::from(i16::from_be_bytes([bytes[0], bytes[1]])),
+        ),
+        (true, 4) => (
+            i128::from(i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
+            i128::from(i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
+        ),
+        (true, 8) => (
+            i128::from(i64::from_le_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            ])),
+            i128::from(i64::from_be_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            ])),
+        ),
+        (false, 2) => (
+            i128::from(u16::from_le_bytes([bytes[0], bytes[1]])),
+            i128::from(u16::from_be_bytes([bytes[0], bytes[1]])),
+        ),
+        (false, 4) => (
+            i128::from(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
+            i128::from(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
+        ),
+        (false, 8) => (
+            i128::from(u64::from_le_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            ])),
+            i128::from(u64::from_be_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            ])),
+        ),
+        (_, len) => {
+            return Err(format!("unsupported COMP/BINARY payload length: {}", len));
         }
     };
 
-    if !picture.signed && raw < 0 {
-        raw = match bytes.len() {
-            2 => i64::from(u16::from_le_bytes([bytes[0], bytes[1]])),
-            4 => i64::from(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
-            8 => u64::from_le_bytes([
-                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-            ]) as i64,
-            _ => raw,
-        };
-    }
+    let le_fits = fits_picture_digits(raw_le, picture);
+    let be_fits = fits_picture_digits(raw_be, picture);
+    let raw = if be_fits && !le_fits { raw_be } else { raw_le };
 
     let value = if picture.digits_after == 0 {
         raw.to_string()
     } else {
         let negative = raw < 0;
-        let abs = raw.unsigned_abs().to_string();
+        let abs = raw.abs().to_string();
         let mut digits = abs;
         if digits.len() <= picture.digits_after {
             let mut padded = "0".repeat(picture.digits_after + 1 - digits.len());
@@ -361,6 +403,14 @@ fn decode_binary(bytes: &[u8], picture: &Picture) -> std::result::Result<Value, 
     };
 
     Ok(Value::Number(value))
+}
+
+fn fits_picture_digits(value: i128, picture: &Picture) -> bool {
+    let digits_total = picture.digits_before + picture.digits_after;
+    if digits_total == 0 {
+        return true;
+    }
+    value.abs().to_string().len() <= digits_total
 }
 
 fn comp3_zero(picture: &Picture) -> String {
@@ -677,6 +727,6 @@ mod tests {
         assert_eq!(rows[0][0].1, Value::Number("1".to_string()));
         assert_eq!(rows[0][1].1, Value::Text("Joan Q & Z".into()));
         assert_eq!(rows[0][2].1, Value::Text("10 Sandton, Johannesburg".into()));
-        assert_eq!(rows[0][3].1, Value::Text("777676251".into()));
+        assert_eq!(rows[0][3].1, Value::Number("777676251".into()));
     }
 }
