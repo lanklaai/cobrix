@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::Read;
 
 use crate::schema::{Picture, Row, Schema, Usage, Value};
@@ -196,7 +197,9 @@ pub fn stream_rows<R: Read>(
 }
 
 fn decode_row(record: &[u8], schema: &Schema, cfg: &DecodeConfig) -> Result<Row> {
-    let mut offset = 0usize;
+    let mut sequential_offset = 0usize;
+    let mut offsets = HashMap::<&str, usize>::new();
+    let mut redefine_consumed = HashMap::<&str, usize>::new();
     let mut row = Vec::with_capacity(schema.fields.len());
     let mut buffer = vec![];
     let mut field_buf = vec![];
@@ -204,6 +207,25 @@ fn decode_row(record: &[u8], schema: &Schema, cfg: &DecodeConfig) -> Result<Row>
 
     for (index, field) in schema.fields.iter().enumerate() {
         let len = field.byte_len();
+        let offset = if let Some(target) = field.redefines.as_deref() {
+            if let Some(base) = offsets.get(target).copied() {
+                let rel = redefine_consumed.get(target).copied().unwrap_or(0);
+                redefine_consumed.insert(target, rel + len);
+                base + rel
+            } else {
+                let start = sequential_offset;
+                sequential_offset += len;
+                start
+            }
+        } else {
+            {
+                let start = sequential_offset;
+                sequential_offset += len;
+                start
+            }
+        };
+        offsets.insert(&field.name, offset);
+
         let end = offset + len;
         let raw = if end <= record.len() {
             &record[offset..end]
@@ -220,8 +242,6 @@ fn decode_row(record: &[u8], schema: &Schema, cfg: &DecodeConfig) -> Result<Row>
         } else {
             raw
         };
-        offset += len;
-
         let picture = field.picture.as_ref().expect("leaf fields only");
         buffer.clear();
         buffer.extend_from_slice(decode_bytes);
@@ -266,7 +286,14 @@ fn decode_field(
     let raw = String::from_utf8_lossy(bytes).to_string();
 
     if picture.is_alphanumeric() {
-        let normalized = raw.replace('\u{0}', " ");
+        let normalized: String = raw
+            .chars()
+            .map(|ch| match ch {
+                '\u{0}' | '\u{FFFD}' => ' ',
+                _ if ch.is_control() => ' ',
+                _ => ch,
+            })
+            .collect();
         if cfg.trim_text {
             return Ok(Value::Text(normalized.trim_end_matches(' ').to_string()));
         }
@@ -413,7 +440,7 @@ fn decode_comp3(bytes: &[u8], picture: &Picture) -> std::result::Result<Value, S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ParserConfig, parse_copybook};
+    use crate::{parse_copybook, ParserConfig};
 
     #[test]
     fn reads_fixed_rows() {
