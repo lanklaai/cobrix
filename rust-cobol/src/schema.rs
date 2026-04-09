@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 #[derive(Debug, Clone, Default)]
 pub struct Schema {
     pub fields: Vec<Field>,
@@ -5,7 +7,33 @@ pub struct Schema {
 
 impl Schema {
     pub fn fixed_record_len(&self) -> usize {
-        self.fields.iter().map(Field::byte_len).sum()
+        let mut sequential_offset = 0usize;
+        let mut offsets = HashMap::<&str, usize>::new();
+        let mut redefine_consumed = HashMap::<&str, usize>::new();
+        let mut max_end = 0usize;
+
+        for field in &self.fields {
+            let len = field.byte_len();
+            let offset = if let Some(target) = field.redefines.as_deref() {
+                if let Some(base) = offsets.get(target).copied() {
+                    let rel = redefine_consumed.get(target).copied().unwrap_or(0);
+                    redefine_consumed.insert(target, rel + len);
+                    base + rel
+                } else {
+                    let start = sequential_offset;
+                    sequential_offset += len;
+                    start
+                }
+            } else {
+                let start = sequential_offset;
+                sequential_offset += len;
+                start
+            };
+            offsets.insert(&field.name, offset);
+            max_end = max_end.max(offset + len);
+        }
+
+        max_end
     }
 }
 

@@ -1,5 +1,6 @@
 use crate::schema::{Field, Picture, Schema, Usage};
 use crate::{CobolError, Result};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone)]
 pub struct ParserConfig {
@@ -18,6 +19,7 @@ pub fn parse_copybook(copybook_text: &str, cfg: &ParserConfig) -> Result<Schema>
     let logical_lines = logical_lines(copybook_text, cfg.allow_comments);
     let mut fields = Vec::new();
     let mut occurs_stack: Vec<(u8, usize)> = Vec::new();
+    let mut redefine_stack: Vec<(u8, Option<String>)> = Vec::new();
     let mut filler_count = 0usize;
 
     for line in logical_lines {
@@ -28,13 +30,19 @@ pub fn parse_copybook(copybook_text: &str, cfg: &ParserConfig) -> Result<Schema>
         while occurs_stack.last().is_some_and(|(lvl, _)| *lvl >= level) {
             occurs_stack.pop();
         }
+        while redefine_stack.last().is_some_and(|(lvl, _)| *lvl >= level) {
+            redefine_stack.pop();
+        }
         let parent_occurs = occurs_stack.last().map(|(_, mult)| *mult).unwrap_or(1);
+        let inherited_redefines = redefine_stack
+            .last()
+            .and_then(|(_, redefines)| redefines.clone());
 
         let occurs = parse_occurs(&rest).unwrap_or(1);
         let effective_occurs = parent_occurs.saturating_mul(occurs.max(1));
         occurs_stack.push((level, effective_occurs));
 
-        let redefines = parse_redefines(&rest);
+        let redefines = parse_redefines(&rest).or(inherited_redefines);
         let depending_on = parse_depends_on(&rest);
 
         let picture = extract_pic_clause(&rest)
@@ -54,9 +62,43 @@ pub fn parse_copybook(copybook_text: &str, cfg: &ParserConfig) -> Result<Schema>
             name: field_name,
             picture,
             occurs: effective_occurs,
-            redefines,
+            redefines: redefines.clone(),
             depending_on,
         });
+
+        redefine_stack.push((level, redefines));
+    }
+
+    let mut first_leaf_by_group = HashMap::new();
+    for (idx, field) in fields.iter().enumerate() {
+        if field.is_leaf() {
+            continue;
+        }
+        if let Some(descendant) = fields
+            .iter()
+            .skip(idx + 1)
+            .take_while(|child| child.level > field.level)
+            .find(|child| child.is_leaf())
+        {
+            first_leaf_by_group.insert(field.name.clone(), descendant.name.clone());
+        }
+    }
+
+    let leaf_names: HashSet<String> = fields
+        .iter()
+        .filter(|field| field.is_leaf())
+        .map(|field| field.name.clone())
+        .collect();
+
+    for field in &mut fields {
+        let mapped = field
+            .redefines
+            .as_ref()
+            .filter(|target| !leaf_names.contains((*target).as_str()))
+            .and_then(|target| first_leaf_by_group.get(target).cloned());
+        if let Some(mapped) = mapped {
+            field.redefines = Some(mapped);
+        }
     }
 
     let leaves: Vec<Field> = fields.into_iter().filter(|f| f.is_leaf()).collect();
@@ -187,7 +229,11 @@ fn extract_pic_clause(rest: &str) -> Option<String> {
     }
 
     let pic = pic.trim().trim_end_matches('.').replace(' ', "");
-    if pic.is_empty() { None } else { Some(pic) }
+    if pic.is_empty() {
+        None
+    } else {
+        Some(pic)
+    }
 }
 
 fn parse_picture(pic: String, usage: Usage) -> Result<Picture> {
