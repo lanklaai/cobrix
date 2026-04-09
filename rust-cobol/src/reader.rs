@@ -440,7 +440,7 @@ fn decode_comp3(bytes: &[u8], picture: &Picture) -> std::result::Result<Value, S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{parse_copybook, ParserConfig};
+    use crate::{ParserConfig, parse_copybook};
 
     #[test]
     fn reads_fixed_rows() {
@@ -655,5 +655,28 @@ mod tests {
 
         assert_eq!(rows[0][0].1, Value::Number("64".into()));
         assert_eq!(rows[0][1].1, Value::Text("COB".into()));
+    }
+
+    #[test]
+    fn test_special_characters() {
+        let cb1 = include_str!("../../data/test18 special_char.cob");
+        let schema = parse_copybook(cb1, &ParserConfig::default()).expect("schema");
+
+        let cfg = DecodeConfig {
+            trim_text: true,
+            ..Default::default()
+        };
+
+        let data = include_bytes!("../../data/test18 special_char/HIERARCHICAL.DATA.RDW.dat");
+        let rows: Vec<Row> = stream_rows(&data[..], &schema, &cfg)
+            .collect::<Result<Vec<_>>>()
+            .expect("rows");
+
+        assert!(!rows.is_empty());
+        // Record length should not be a string
+        assert_eq!(rows[0][0].1, Value::Number("1".to_string()));
+        assert_eq!(rows[0][1].1, Value::Text("Joan Q & Z".into()));
+        assert_eq!(rows[0][2].1, Value::Text("10 Sandton, Johannesburg".into()));
+        assert_eq!(rows[0][3].1, Value::Text("777676251".into()));
     }
 }
