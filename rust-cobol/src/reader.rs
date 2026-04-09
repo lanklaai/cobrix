@@ -548,7 +548,7 @@ mod tests {
 
         let first_item_amt = rows[0]
             .iter()
-            .find(|(name, _)| name == "TH-ITEM-AMT")
+            .find(|(name, _)| name == "TH-ITEM-AMT" || name.ends_with("_TH-ITEM-AMT"))
             .map(|(_, value)| value)
             .expect("TH-ITEM-AMT field");
         assert!(matches!(first_item_amt, Value::Number(_)));

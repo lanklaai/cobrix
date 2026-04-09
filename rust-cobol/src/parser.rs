@@ -20,6 +20,7 @@ pub fn parse_copybook(copybook_text: &str, cfg: &ParserConfig) -> Result<Schema>
     let mut fields = Vec::new();
     let mut occurs_stack: Vec<(u8, usize)> = Vec::new();
     let mut redefine_stack: Vec<(u8, Option<String>)> = Vec::new();
+    let mut heading_stack: Vec<(u8, String, bool)> = Vec::new();
     let mut filler_count = 0usize;
 
     for line in logical_lines {
@@ -33,6 +34,9 @@ pub fn parse_copybook(copybook_text: &str, cfg: &ParserConfig) -> Result<Schema>
         while redefine_stack.last().is_some_and(|(lvl, _)| *lvl >= level) {
             redefine_stack.pop();
         }
+        while heading_stack.last().is_some_and(|(lvl, _, _)| *lvl >= level) {
+            heading_stack.pop();
+        }
         let parent_occurs = occurs_stack.last().map(|(_, mult)| *mult).unwrap_or(1);
         let inherited_redefines = redefine_stack
             .last()
@@ -42,7 +46,23 @@ pub fn parse_copybook(copybook_text: &str, cfg: &ParserConfig) -> Result<Schema>
         let effective_occurs = parent_occurs.saturating_mul(occurs.max(1));
         occurs_stack.push((level, effective_occurs));
 
-        let redefines = parse_redefines(&rest).or(inherited_redefines);
+        let heading_prefix = heading_stack
+            .iter()
+            .filter(|(_, _, include)| *include)
+            .map(|(_, heading, _)| heading.clone())
+            .collect::<Vec<_>>();
+
+        let prefixed_name = |base: &str| {
+            if heading_prefix.is_empty() {
+                base.to_string()
+            } else {
+                format!("{}_{}", heading_prefix.join("_"), base)
+            }
+        };
+
+        let redefines = parse_redefines(&rest)
+            .map(|target| prefixed_name(&target))
+            .or(inherited_redefines);
         let depending_on = parse_depends_on(&rest);
 
         let picture = extract_pic_clause(&rest)
@@ -56,15 +76,21 @@ pub fn parse_copybook(copybook_text: &str, cfg: &ParserConfig) -> Result<Schema>
         } else {
             name
         };
+        let qualified_name = prefixed_name(&field_name);
 
         fields.push(Field {
             level,
-            name: field_name,
+            name: qualified_name.clone(),
             picture,
             occurs: effective_occurs,
             redefines: redefines.clone(),
             depending_on,
         });
+
+        if fields.last().is_some_and(|field| !field.is_leaf()) {
+            let include_in_prefix = !heading_stack.is_empty();
+            heading_stack.push((level, qualified_name, include_in_prefix));
+        }
 
         redefine_stack.push((level, redefines));
     }
@@ -364,5 +390,19 @@ mod tests {
         assert!(schema1.fields.len() > 5);
         assert!(schema6.fields.len() > 20);
         assert!(schema1.fixed_record_len() > 0);
+    }
+
+    #[test]
+    fn prefixes_leaf_names_with_group_headings() {
+        let cb = "01 ENTITY.
+05 COMPANY.
+   10 ADDRESS PIC X(30).
+05 OFFICE REDEFINES COMPANY.
+   10 ADDRESS PIC X(30).";
+
+        let schema = parse_copybook(cb, &ParserConfig::default()).expect("parse test");
+        let names: Vec<String> = schema.fields.into_iter().map(|f| f.name).collect();
+
+        assert_eq!(names, vec!["COMPANY_ADDRESS", "OFFICE_ADDRESS"]);
     }
 }
