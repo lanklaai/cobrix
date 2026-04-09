@@ -156,7 +156,6 @@ impl<R: Read> FixedRecordReader<R> {
     }
 }
 
-
 fn looks_like_rdw_little_endian_header(schema: &Schema, header: &[u8]) -> bool {
     if header.len() < 4 {
         return false;
@@ -576,6 +575,40 @@ mod tests {
         assert_eq!(rows[1][4].1, Value::Text("+(277) 944 44 5".into()));
         // Should not be null terminated
         assert_eq!(rows[1][5].1, Value::Text("5 Janiece Newcombe".into()));
+    }
+
+    #[test]
+    fn test_data_not_garbage3() {
+        let cb1 = include_str!("../../data/test5d_copybook.cob");
+        let schema = parse_copybook(cb1, &ParserConfig::default()).expect("schema");
+
+        let cfg = DecodeConfig {
+            trim_text: true,
+            ..Default::default()
+        };
+
+        let data = include_bytes!("../../data/test5_data/COMP.DETAILS.SEP30.DATA.dat");
+        let rows: Vec<Row> = stream_rows(&data[..], &schema, &cfg)
+            .collect::<Result<Vec<_>>>()
+            .expect("rows");
+
+        assert!(!rows.is_empty());
+        // Record length should not be a string
+        assert_eq!(rows[2][0].1, Value::Number("64".to_string()));
+        // Should not have a bunch of nulls at the end
+        assert_eq!(rows[2][2].1, Value::Text("C".into()));
+        assert_eq!(rows[2][4].1, Value::Text("Robotrd Inc.".into()));
+        // Should not be null terminated
+        assert_eq!(
+            rows[2][5].1,
+            Value::Text("2 Park ave., Johannesburg".into())
+        );
+        assert_eq!(rows[2][7].1, Value::Text("".into()));
+        assert_eq!(rows[2][9].1, Value::Text("Robotrd Inc.   2".into()));
+        assert_eq!(
+            rows[2][10].1,
+            Value::Text("Park ave., JohannesburgN".into())
+        );
     }
 
     #[test]
