@@ -728,5 +728,13 @@ mod tests {
         assert_eq!(rows[0][1].1, Value::Text("Joan Q & Z".into()));
         assert_eq!(rows[0][2].1, Value::Text("10 Sandton, Johannesburg".into()));
         assert_eq!(rows[0][3].1, Value::Number("777676251".into()));
+
+        dbg!(&rows[2]);
+        assert_eq!(rows[2][0].1, Value::Number("3".to_string()));
+        assert_eq!(rows[2][1].1, Value::Text("Cliff".into()));
+        assert_eq!(rows[2][2].1, Value::Text("Ortego".into()));
+        assert_eq!(rows[2][3].1, Value::Number("researcher".into()));
+        assert_eq!(rows[2][4].1, Value::Number("107 Labe str., Berlin".into()));
+        assert_eq!(rows[2][5].1, Value::Number("+(657) 886 60 55".into()));
     }
 }
