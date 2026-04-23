@@ -125,7 +125,11 @@ The example project can be used as a template for creating Spark Application. Re
 of that project for the detailed guide how to run the examples locally and on a cluster.
 
 When running `mvn clean package` in `examples/spark-cobol-app` an uber jar will be created. It can be used to run
-jobs via `spark-submit` or `spark-shell`. 
+jobs via `spark-submit` or `spark-shell`.
+
+The build flow for Cobrix itself is unchanged. VSAM support does not require a different build command or a separate
+data source name. The only packaging difference is runtime-related: the Cobrix bundle excludes JZOS, so if you plan to
+read `vsam://` datasets you need to provide a compatible JZOS installation on the target z/OS Spark runtime. 
 
 ## How to generate Code coverage report
 ```sbt
@@ -357,6 +361,10 @@ Creating an uber jar for Cobrix is very easy. Steps to build:
 You can collect the uber jar of `spark-cobol` either at
 `spark-cobol/target/scala-2.11/` or in `spark-cobol/target/scala-2.12/` depending on the Scala version you used.
 The fat jar will have '-bundle' suffix. You can also download pre-built bundles from https://github.com/AbsaOSS/cobrix/releases/tag/v2.7.3
+
+For regular file-based Cobrix reads, the bundle is used the same way as before. For VSAM reads, the build command is
+still the same, but the generated Cobrix bundle does not include JZOS. Make sure the z/OS Spark environment supplies a
+compatible JZOS runtime when using `vsam://...` paths.
 
 Then, run `spark-shell` or `spark-submit` adding the fat jar as the option.
 ```sh
