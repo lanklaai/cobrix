@@ -62,7 +62,11 @@ class DefaultSource
     val cobolParameters = CobolParametersParser.parse(new Parameters(parameters))
     CobolParametersValidator.checkSanity(cobolParameters)
 
-    val filesList = CobolRelation.getListFilesWithOrder(cobolParameters.sourcePaths, sqlContext, isRecursiveRetrieval(sqlContext))
+    val filesList: Array[za.co.absa.cobrix.spark.cobol.source.types.FileWithOrder] = if (cobolParameters.vsamParams.nonEmpty) {
+      Array.empty[za.co.absa.cobrix.spark.cobol.source.types.FileWithOrder]
+    } else {
+      CobolRelation.getListFilesWithOrder(cobolParameters.sourcePaths, sqlContext, isRecursiveRetrieval(sqlContext))
+    }
 
     val hasCompressedFiles = filesList.exists(_.isCompressed)
 
@@ -74,7 +78,8 @@ class DefaultSource
       filesList,
       buildEitherReader(sqlContext.sparkSession, cobolParameters, hasCompressedFiles),
       LocalityParameters.extract(cobolParameters),
-      cobolParameters.debugIgnoreFileSize)(sqlContext)
+      cobolParameters.debugIgnoreFileSize,
+      cobolParameters.vsamParams)(sqlContext)
   }
 
   /** Writer relation */

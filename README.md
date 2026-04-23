@@ -190,6 +190,47 @@ Cobrix has better handling of special characters and partial records using its e
 
 Read more on record formats at https://www.ibm.com/docs/en/zos/2.4.0?topic=files-selecting-record-formats-non-vsam-data-sets
 
+### Reading VSAM datasets on z/OS
+
+Cobrix can also read cataloged VSAM datasets by using the same `cobol` source with a `vsam://` path:
+
+```scala
+val customerVsam = spark.read
+  .format("cobol")
+  .option("copybook", "file:///u/me/customer.cpy")
+  .option("record_format", "F")
+  .option("vsam_organization", "ksds")
+  .option("vsam_key_column", "CUSTOMER-ID")
+  .load("vsam://HLQ.APP.CUSTOMER")
+```
+
+```sql
+CREATE TABLE customer_vsam
+USING cobol
+OPTIONS (
+  path 'vsam://HLQ.APP.CUSTOMER',
+  copybook 'file:///u/me/customer.cpy',
+  record_format 'F',
+  vsam_organization 'ksds',
+  vsam_key_column 'CUSTOMER-ID'
+);
+```
+
+The first VSAM implementation supports:
+
+- `KSDS` sequential scans and key predicate pushdown on `vsam_key_column`
+- `ESDS` sequential scans and position predicate pushdown on `_vsam_rba`
+- `RRDS` sequential scans and position predicate pushdown on `_vsam_rrn`
+
+Pushdown is supported for equality, `IN`, and bounded range predicates on the VSAM access column. Unsupported predicates fall back to a sequential scan and are evaluated by Spark after the records are decoded.
+
+Runtime notes:
+
+- VSAM reads currently require `.option("record_format", "F")`
+- `LDS` datasets are not supported
+- Spark executors must run on z/OS with a matching JZOS runtime available
+- The shaded Cobrix bundle excludes JZOS; provide it from the target runtime environment
+
 ### Streaming Cobol binary files from a directory
 
 1. Create a Spark ```StreamContext```
@@ -1631,6 +1672,17 @@ The output looks like this:
 | .option("record_length", "100")   | Overrides the length of the record (in bypes). Normally, the size is derived from the copybook. But explicitly specifying record size can be helpful for debugging fixed-record length files.                                                                                           |
 | .option("block_length", "500")    | Specifies the block length for FB records. It should be a multiple of 'record_length'. Cannot be used together with `records_per_block`                                                                                                                                                 |
 | .option("records_per_block", "5") | Specifies the number of records ber block for FB records. Cannot be used together with `block_length`                                                                                                                                                                                   |
+
+##### VSAM options
+
+| Option (usage example)                      | Description                                                                                                                                                                                                                                                                                            |
+|---------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| .option("path", "vsam://HLQ.APP.CUSTOMER")  | Reads a cataloged VSAM dataset instead of a Hadoop or local file path. A single VSAM dataset is processed by one Spark partition in the current implementation.                                                                                                                                      |
+| .option("vsam_organization", "ksds")        | Required for `vsam://` paths. Supported values are `ksds`, `esds`, and `rrds`. `lds` is not supported.                                                                                                                                                                                               |
+| .option("vsam_key_column", "CUSTOMER-ID")   | Required for `ksds`. Names the copybook field used as the business key for predicate pushdown. This option must not be used for `esds` or `rrds`.                                                                                                                                                    |
+| .option("record_format", "F")               | Required for VSAM reads in the current implementation.                                                                                                                                                                                                                                                 |
+| SQL filter on `_vsam_rba`                   | Metadata column available for `esds` datasets. Use it for direct position filters such as `_vsam_rba = 12345` or bounded ranges.                                                                                                                                                                     |
+| SQL filter on `_vsam_rrn`                   | Metadata column available for `rrds` datasets. Use it for direct position filters such as `_vsam_rrn = 42` or bounded ranges.                                                                                                                                                                        |
 
 ##### Variable record length files options (for record_format = V or VB)
 

@@ -20,8 +20,75 @@ import org.scalatest.wordspec.AnyWordSpec
 import za.co.absa.cobrix.cobol.parser.policies.VariableSizeOccursPolicy
 import za.co.absa.cobrix.cobol.parser.recordformats.RecordFormat.{FixedLength, VariableBlock}
 import za.co.absa.cobrix.cobol.reader.parameters.{MultisegmentParameters, ReaderParameters}
+import za.co.absa.cobrix.cobol.reader.parameters.CobolParametersParser._
+import org.apache.hadoop.conf.Configuration
 
 class CobolParametersValidatorSuite extends AnyWordSpec {
+  "validateOrThrow" should {
+    "reject VSAM path without organization" in {
+      val ex = intercept[IllegalArgumentException] {
+        CobolParametersValidator.validateOrThrow(Map(
+          PARAM_SOURCE_PATH -> "vsam://HLQ.APP.CUSTOMER",
+          PARAM_COPYBOOK_CONTENTS -> "01 REC. 05 CUSTOMER-ID PIC X(10)."
+        ), new Configuration(false))
+      }
+
+      assert(ex.getMessage.contains(PARAM_VSAM_ORGANIZATION))
+    }
+  }
+
+  "checkSanity" should {
+    "reject KSDS without key column" in {
+      val ex = intercept[IllegalArgumentException] {
+        val params = za.co.absa.cobrix.cobol.reader.parameters.CobolParametersParser.parse(
+          new za.co.absa.cobrix.cobol.reader.parameters.Parameters(Map(
+            PARAM_SOURCE_PATH -> "vsam://HLQ.APP.CUSTOMER",
+            PARAM_COPYBOOK_CONTENTS -> "01 REC. 05 CUSTOMER-ID PIC X(10).",
+            PARAM_RECORD_FORMAT -> "F",
+            PARAM_VSAM_ORGANIZATION -> "ksds"
+          ))
+        )
+        CobolParametersValidator.checkSanity(params)
+      }
+
+      assert(ex.getMessage.contains(PARAM_VSAM_KEY_COLUMN))
+    }
+
+    "reject key column for ESDS and RRDS" in {
+      Seq("esds", "rrds").foreach { organization =>
+        val ex = intercept[IllegalArgumentException] {
+          val params = za.co.absa.cobrix.cobol.reader.parameters.CobolParametersParser.parse(
+            new za.co.absa.cobrix.cobol.reader.parameters.Parameters(Map(
+              PARAM_SOURCE_PATH -> "vsam://HLQ.APP.CUSTOMER",
+              PARAM_COPYBOOK_CONTENTS -> "01 REC. 05 CUSTOMER-ID PIC X(10).",
+              PARAM_RECORD_FORMAT -> "F",
+              PARAM_VSAM_ORGANIZATION -> organization,
+              PARAM_VSAM_KEY_COLUMN -> "CUSTOMER-ID"
+            ))
+          )
+          CobolParametersValidator.checkSanity(params)
+        }
+
+        assert(ex.getMessage.contains(PARAM_VSAM_KEY_COLUMN))
+      }
+    }
+
+    "reject unsupported VSAM organization" in {
+      val ex = intercept[IllegalArgumentException] {
+        za.co.absa.cobrix.cobol.reader.parameters.CobolParametersParser.parse(
+          new za.co.absa.cobrix.cobol.reader.parameters.Parameters(Map(
+            PARAM_SOURCE_PATH -> "vsam://HLQ.APP.CUSTOMER",
+            PARAM_COPYBOOK_CONTENTS -> "01 REC. 05 CUSTOMER-ID PIC X(10).",
+            PARAM_RECORD_FORMAT -> "F",
+            PARAM_VSAM_ORGANIZATION -> "lds"
+          ))
+        )
+      }
+
+      assert(ex.getMessage.contains("Unsupported VSAM organization"))
+    }
+  }
+
   "validateParametersForWriting" should {
     "detect validation issues" in {
       val readParams = ReaderParameters(

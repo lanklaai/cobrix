@@ -17,7 +17,7 @@
 package za.co.absa.cobrix.spark.cobol.source
 
 import org.scalatest.funsuite.AnyFunSuite
-import za.co.absa.cobrix.cobol.reader.parameters.{CobolParametersParser, Parameters}
+import za.co.absa.cobrix.cobol.reader.parameters.{CobolParametersParser, Parameters, VsamOrganization}
 
 import scala.collection.immutable.HashMap
 
@@ -133,6 +133,22 @@ class ParametersParsingSpec extends AnyFunSuite {
       CobolParametersParser.getRecordLengthMappings("""Hmm...""")
     }
     assert(ex4.getMessage == "Unable to parse record length mapping JSON.")
+  }
+
+  test("Test VSAM parameters parsing") {
+    val config = HashMap[String, String](
+      "path" -> "vsam://HLQ.APP.CUSTOMER",
+      "copybook_contents" -> "01 REC. 05 CUSTOMER-ID PIC X(10).",
+      "record_format" -> "F",
+      "vsam_organization" -> "ksds",
+      "vsam_key_column" -> "CUSTOMER-ID"
+    )
+
+    val parsed = CobolParametersParser.parse(new Parameters(config))
+
+    assert(parsed.vsamParams.nonEmpty)
+    assert(parsed.vsamParams.get.organization == VsamOrganization.Ksds)
+    assert(parsed.vsamParams.get.keyColumn.contains("CUSTOMER-ID"))
   }
 
 }

@@ -23,4 +23,7 @@ object MetadataFields {
   // Metadata for 'array'
   val MIN_ELEMENTS = "minElements"
   val MAX_ELEMENTS = "maxElements"
+
+  val VSAM_RBA = "_vsam_rba"
+  val VSAM_RRN = "_vsam_rrn"
 }

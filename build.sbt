@@ -116,7 +116,11 @@ lazy val sparkCobol = (project in file("spark-cobol"))
     libraryDependencies ++= SparkCobolDependencies(scalaVersion.value) :+ getScalaDependency(scalaVersion.value),
     Test / fork := true, // Spark tests fail randomly otherwise
     populateBuildInfoTemplate,
-    assemblySettings
+    assemblySettings,
+    assembly / assemblyExcludedJars := {
+      val cp = (assembly / fullClasspath).value
+      cp.filter(_.data.getName.startsWith("ibmjzos-"))
+    }
   ).dependsOn(cobolParser)
   .settings(
     jacocoReportSettings := commonJacocoReportSettings.withTitle("cobrix:spark-cobol Jacoco Report"),

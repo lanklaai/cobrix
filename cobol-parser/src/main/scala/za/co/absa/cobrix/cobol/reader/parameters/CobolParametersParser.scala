@@ -45,6 +45,8 @@ object CobolParametersParser extends Logging {
   val PARAM_SOURCE_PATH               = "path"
   val PARAM_SOURCE_PATHS              = "data_paths"
   val PARAM_SOURCE_PATHS_LEGACY       = "paths"
+  val PARAM_VSAM_ORGANIZATION         = "vsam_organization"
+  val PARAM_VSAM_KEY_COLUMN           = "vsam_key_column"
   val PARAM_ENCODING                  = "encoding"
   val PARAM_PEDANTIC                  = "pedantic"
 
@@ -244,6 +246,7 @@ object CobolParametersParser extends Logging {
     val pathsParam = getParameter(PARAM_SOURCE_PATHS, params).orElse(getParameter(PARAM_SOURCE_PATHS_LEGACY, params))
 
     val paths = pathsParam.map(_.split(',')).getOrElse(Array(getParameter(PARAM_SOURCE_PATH, params).getOrElse("")))
+    val vsamParams = parseVsamParameters(paths, params)
 
     val variableLengthParams = parseVariableLengthParameters(params, recordFormatDefined)
 
@@ -277,6 +280,7 @@ object CobolParametersParser extends Logging {
       copybookPaths,
       getParameter(PARAM_COPYBOOK_CONTENTS, params),
       paths,
+      vsamParams,
       recordFormat,
       recordFormat == CobrixAsciiText || recordFormat == AsciiText || params.getOrElse(PARAM_IS_TEXT, "false").toBoolean,
       isEbcdic,
@@ -323,6 +327,33 @@ object CobolParametersParser extends Logging {
     validateSparkCobolOptions(params, recordFormat, validateRedundantOptions)
     cobolParameters
   }
+
+  private def parseVsamParameters(paths: Seq[String], params: Parameters): Option[VsamParameters] = {
+    val hasVsamPaths = paths.exists(isVsamPath)
+
+    if (!hasVsamPaths) {
+      None
+    } else {
+      val organizationName = params.get(PARAM_VSAM_ORGANIZATION)
+        .map(_.trim)
+        .filter(_.nonEmpty)
+        .getOrElse {
+          throw new IllegalArgumentException(s"'$PARAM_VSAM_ORGANIZATION' must be specified for VSAM paths.")
+        }
+
+      val organization = VsamOrganization.fromString(organizationName).getOrElse {
+        throw new IllegalArgumentException(
+          s"Unsupported VSAM organization '$organizationName'. Supported values: ksds, esds, rrds."
+        )
+      }
+
+      val keyColumn = params.get(PARAM_VSAM_KEY_COLUMN).map(_.trim).filter(_.nonEmpty)
+
+      Some(VsamParameters(organization, keyColumn))
+    }
+  }
+
+  def isVsamPath(path: String): Boolean = path.trim.toLowerCase.startsWith("vsam://")
 
   def getIsEbcdic(params: Parameters, recordFormat: RecordFormat): Boolean = {
     val encoding = params.getOrElse(PARAM_ENCODING, "")

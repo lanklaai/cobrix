@@ -72,6 +72,7 @@ case class CobolParameters(
                             multiCopybookPath:       Seq[String],
                             copybookContent:         Option[String],
                             sourcePaths:             Seq[String],
+                            vsamParams:              Option[VsamParameters],
                             recordFormat:            RecordFormat,
                             isText:                  Boolean,
                             isEbcdic:                Boolean,

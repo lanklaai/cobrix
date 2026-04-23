@@ -19,9 +19,10 @@ package za.co.absa.cobrix.spark.cobol.source.parameters
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.slf4j.LoggerFactory
+import za.co.absa.cobrix.cobol.parser.recordformats.RecordFormat.FixedLength
 import za.co.absa.cobrix.cobol.parser.recordformats.RecordFormat
 import za.co.absa.cobrix.cobol.reader.parameters.CobolParametersParser._
-import za.co.absa.cobrix.cobol.reader.parameters.{CobolParameters, ReaderParameters}
+import za.co.absa.cobrix.cobol.reader.parameters.{CobolParameters, ReaderParameters, VsamOrganization}
 import za.co.absa.cobrix.spark.cobol.utils.{FileNameUtils, FsType}
 
 import java.io.FileNotFoundException
@@ -51,6 +52,30 @@ object CobolParametersValidator {
 
     if (params.copybookPath.isEmpty && params.copybookContent.isEmpty && params.multiCopybookPath.isEmpty) {
       throw new IllegalArgumentException("Either, copybook path or copybook content must be specified.")
+    }
+
+    val hasVsamPaths = params.sourcePaths.exists(isVsamPath)
+    if (hasVsamPaths != params.sourcePaths.forall(isVsamPath)) {
+      throw new IllegalArgumentException("VSAM and file system paths cannot be mixed in a single read operation.")
+    }
+
+    params.vsamParams.foreach { vsamParams =>
+      if (!hasVsamPaths) {
+        throw new IllegalArgumentException(s"'$PARAM_VSAM_ORGANIZATION' can only be used with 'vsam://' paths.")
+      }
+
+      if (params.recordFormat != FixedLength) {
+        throw new IllegalArgumentException("VSAM reads currently require 'record_format' = 'F'.")
+      }
+
+      vsamParams.organization match {
+        case VsamOrganization.Ksds if vsamParams.keyColumn.isEmpty =>
+          throw new IllegalArgumentException(s"'$PARAM_VSAM_KEY_COLUMN' must be specified for KSDS datasets.")
+        case VsamOrganization.Ksds =>
+        case _ if vsamParams.keyColumn.nonEmpty =>
+          throw new IllegalArgumentException(s"'$PARAM_VSAM_KEY_COLUMN' is only supported for KSDS datasets.")
+        case _ =>
+      }
     }
   }
 
@@ -83,6 +108,24 @@ object CobolParametersValidator {
 
     if (parameters.isDefinedAt(PARAM_SOURCE_PATH) && parameters.isDefinedAt(PARAM_SOURCE_PATHS)) {
       throw new IllegalStateException(s"Only one of '$PARAM_SOURCE_PATH' or '$PARAM_SOURCE_PATHS' should be defined.")
+    }
+
+    val rawPaths = parameters.get(PARAM_SOURCE_PATHS)
+      .orElse(parameters.get(PARAM_SOURCE_PATHS_LEGACY))
+      .map(_.split(',').toSeq)
+      .getOrElse(parameters.get(PARAM_SOURCE_PATH).toSeq)
+      .map(_.trim)
+      .filter(_.nonEmpty)
+
+    val hasVsamPaths = rawPaths.exists(isVsamPath)
+    val hasNonVsamPaths = rawPaths.exists(path => !isVsamPath(path))
+
+    if (hasVsamPaths && hasNonVsamPaths) {
+      throw new IllegalArgumentException("VSAM and file system paths cannot be mixed in a single read operation.")
+    }
+
+    if (hasVsamPaths && !parameters.contains(PARAM_VSAM_ORGANIZATION)) {
+      throw new IllegalArgumentException(s"'$PARAM_VSAM_ORGANIZATION' must be specified for VSAM paths.")
     }
 
     def validatePath(fileName: String): Unit = {
@@ -126,11 +169,14 @@ object CobolParametersValidator {
           s"'$PARAM_COPYBOOK_PATH', '$PARAM_COPYBOOK_CONTENTS', '$PARAM_MULTI_COPYBOOK_PATH'.")
       case (Some(_), None, None) =>
         // Nothing to validate
+      case (None, Some(fileName), None) if isVsamPath(fileName) =>
+        // VSAM datasets are validated after option parsing.
       case (None, Some(fileName), None) =>
         validatePath(fileName)
       case (None, None, Some(fileNames)) =>
         for(fileName <-fileNames.split(","))
-          validatePath(fileName)
+          if (!isVsamPath(fileName.trim))
+            validatePath(fileName)
     }
   }
 

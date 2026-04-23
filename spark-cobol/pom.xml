@@ -48,6 +48,11 @@
 			<artifactId>cobol-parser_${scala.compat.version}</artifactId>
 			<version>${project.version}</version>
 		</dependency>
+		<dependency>
+			<groupId>com.ibm.jzos</groupId>
+			<artifactId>ibmjzos</artifactId>
+			<version>2.4.11.1</version>
+		</dependency>
 
 		<dependency>
 			<groupId>org.slf4j</groupId>
